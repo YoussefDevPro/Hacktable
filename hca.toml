@@ -1,0 +1,3 @@
+client_id = "4ac6766616f7034c343659b056ec7e21"
+client_secrets = "fa4c0d0ea9e5836f4797a3121a93a5b8b4785dfcf412870629440e1f5a7a006d"
+redirect_uri = "http://localhost:3000/hackclub/callback"

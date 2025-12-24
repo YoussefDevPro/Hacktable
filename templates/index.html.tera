@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HackChair</title>
+  <link rel="stylesheet" href="/static/css/hackclub.css">
+</head>
+
+<body
+  style="
+    background-color: var(--darker);
+    color: var(--snow);
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    margin: 0;
+  "
+>
+  <a href="/login/hackclub" style="position: absolute; top: var(--spacing-4); right: var(--spacing-4); text-decoration: none;">
+    <button class="cta lg" style="display: flex; align-items: center; gap: var(--spacing-2);">
+      <img
+        src="https://icons.hackclub.com/api/icons/white/slack-fill"
+        alt="HackClub"
+        style="width: 32px; height: 32px;"
+      >
+      Sign in with HackClub
+    </button>
+  </a>
+
+  <main
+    style="
+      background-color: var(--dark);
+      border-radius: var(--radii-ultra);
+      box-shadow: var(--shadow-elevated);
+      max-width: 480px;
+      width: calc(100% - var(--spacing-4));
+      padding: var(--spacing-4);
+      text-align: center;
+    "
+  >
+    <h1
+      style="
+        margin: 0;
+        font-size: var(--font-6);
+        font-weight: var(--font-weight-bold);
+        color: var(--red);
+        letter-spacing: var(--letter-spacing-title);
+      "
+    >
+      HackChair
+    </h1>
+
+    <p
+      style="
+        margin-top: var(--spacing-3);
+        margin-bottom: var(--spacing-4);
+        font-size: var(--font-3);
+        line-height: var(--line-height-body);
+        color: var(--snow);
+      "
+    >
+      Whatever is this thing
+    </p>
+
+    <hr
+      style="
+        border: none;
+        height: 1px;
+        background-color: var(--steel);
+        margin: var(--spacing-4) 0;
+      "
+    >
+
+    <p
+      style="
+        font-size: var(--font-2);
+        color: var(--muted);
+      "
+    >
+      Powered by ideas, caffeine, questionable design decisions,
+      and Rust (blazingly fast) ☕
+    </p>
+  </main>
+</body>
+</html>
+

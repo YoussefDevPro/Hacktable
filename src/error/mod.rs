@@ -1,7 +1,7 @@
 pub mod error {
-    use axum::Json;
     use axum::http::StatusCode;
     use axum::response::{IntoResponse, Response};
+    use axum::Json;
     use thiserror::Error;
 
     #[derive(Error, Debug)]
@@ -13,6 +13,11 @@ pub mod error {
     impl IntoResponse for Error {
         fn into_response(self) -> Response {
             (StatusCode::INTERNAL_SERVER_ERROR, Json(self.to_string())).into_response()
+        }
+    }
+    impl From<StatusCode> for Error {
+        fn from(value: StatusCode) -> Self {
+            value.into()
         }
     }
 
