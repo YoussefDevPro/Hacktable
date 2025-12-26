@@ -62,6 +62,17 @@
     >
       Whatever is this thing
     </p>
+        <p
+      style="
+        margin-top: var(--spacing-3);
+        margin-bottom: var(--spacing-4);
+        font-size: var(--font-3);
+        line-height: var(--line-height-body);
+        color: var(--snow);
+      "
+    >
+      {{ msg }}
+    </p>
 
     <hr
       style="

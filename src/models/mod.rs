@@ -1,5 +1,6 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use surrealdb::sql::Datetime;
 use surrealdb::sql::Thing;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,8 +97,8 @@ pub struct Session {
 pub struct SessionInsert {
     pub user: Thing,
     pub refresh_hash: String,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
+    pub created_at: Datetime,
+    pub expires_at: Datetime,
     pub user_agent: Option<String>,
     pub ip: Option<String>,
 }
@@ -110,13 +111,14 @@ impl SessionInsert {
         user_agent: Option<String>,
         ip: Option<String>,
     ) -> Self {
-        let now = Utc::now();
+        let now: DateTime<Utc> = Utc::now();
+        let expires_at = now + Duration::hours(ttl_hours);
 
         Self {
             user,
             refresh_hash: refresh_hash.0,
-            created_at: now,
-            expires_at: now + chrono::Duration::hours(ttl_hours),
+            created_at: Datetime::from(now),
+            expires_at: Datetime::from(expires_at),
             user_agent,
             ip,
         }

@@ -2,29 +2,28 @@ use crate::models::AuthContext;
 use crate::models::Session;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
-use axum::extract::FromRef;
 use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Html;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use axum::{routing::get, Router};
-use axum_extra::extract::cookie::Key;
-use axum_extra::extract::PrivateCookieJar;
+use axum::{Router, routing::get};
 use axum_extra::TypedHeader;
 use chrono::Utc;
 use headers::UserAgent;
 use lazy_static::lazy_static;
 use std::net::SocketAddr;
-use std::ops::Deref;
-use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::OnceLock;
+use surrealdb::Surreal;
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::engine::remote::ws::Ws;
 use surrealdb::opt::auth::Root;
 use surrealdb::sql::Thing;
-use surrealdb::Surreal;
 use tera::Tera;
+use tower_cookies::CookieManagerLayer;
+use tower_cookies::Cookies;
+use tower_cookies::Key;
 
 mod error;
 mod models;
@@ -55,58 +54,48 @@ macro_rules! render {
     };
 }
 
-pub async fn auth_middleware(mut req: Request<Body>, next: Next) -> Response {
-    if let Some(state) = req.extensions().get::<AppState>() {
-        // Manually create PrivateCookieJar using the key
-        let jar = PrivateCookieJar::from_headers(req.headers(), state.key.clone());
+lazy_static! {
+    static ref KEY: OnceLock<Key> = OnceLock::new();
+}
 
-        if let Some(session_cookie) = jar.get("session") {
-            if let Ok(session_id) = session_cookie.value().parse::<String>() {
-                if let Ok(Some(session)) = DB
-                    .select::<Option<Session>>(("session", session_id.as_str()))
-                    .await
-                {
-                    if session.expires_at >= Utc::now() {
-                        let auth = AuthContext {
-                            user_id: session.user.clone(),
-                            session_id: Thing::from(("session", session_id.as_str())),
-                        };
-                        req.extensions_mut().insert(auth);
-                    } else {
-                        let _ = DB.delete::<Option<Session>>(("session", session_id)).await;
-                    }
-                }
-            }
+pub async fn auth_middleware(cookies: Cookies, mut req: Request<Body>, next: Next) -> Response {
+    println!("auth_middleware hit: {}", req.uri());
+    let key = KEY.get().unwrap();
+    let private_cookies = cookies.private(key);
+
+    let session_id = match private_cookies
+        .get("session")
+        .map(|c| c.value().to_string())
+    {
+        Some(s) => s,
+        None => {
+            req.extensions_mut().insert::<Option<AuthContext>>(None);
+            return next.run(req).await;
         }
+    };
 
-        // Put the jar back into request extensions so handlers can reuse it
-        req.extensions_mut().insert(jar);
+    println!("Session ID from cookie: {}", session_id);
+
+    let session_data = match DB.select::<Option<Session>>(("session", &session_id)).await {
+        Ok(Some(s)) if s.expires_at >= Utc::now() => Some(s),
+        _ => None,
+    };
+
+    if let Some(s) = session_data {
+        let auth = AuthContext {
+            user_id: s.user.clone(),
+            session_id: Thing::from(("session", session_id.as_str())),
+        };
+        println!("Authenticated user: {:?}", s.user);
+        req.extensions_mut().insert(Some(auth));
+    } else {
+        println!("No valid session found");
+        req.extensions_mut().insert::<Option<AuthContext>>(None);
     }
 
     next.run(req).await
 }
 
-#[derive(Clone)]
-struct AppState(Arc<InnerState>);
-
-// deref so you can still access the inner fields easily
-impl Deref for AppState {
-    type Target = InnerState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-struct InnerState {
-    key: Key,
-}
-
-impl FromRef<AppState> for Key {
-    fn from_ref(state: &AppState) -> Self {
-        state.key.clone()
-    }
-}
 // Source - https://stackoverflow.com/a/79331661
 // Posted by sudoExclamationExclamation
 // Retrieved 2025-12-23, License - CC BY-SA 4.0
@@ -127,6 +116,8 @@ async fn connection_info_middleware(
     mut request: Request,
     next: Next,
 ) -> Response {
+    println!("connection info hit: {}", request.uri());
+
     let user_agent = match user_agent {
         Some(u) => u,
         None => return Html("UserAgent is missing.").into_response(),
@@ -136,18 +127,15 @@ async fn connection_info_middleware(
         ip: addr.to_string(),
         user_agent: user_agent.to_string(),
     });
+    println!("connection info passing through");
+
     next.run(request).await
 }
 
 #[tokio::main]
 async fn main() -> Result<(), error::error::Error> {
-    let state = AppState(
-        // You probably don't wanna generate a new one each time the app starts though
-        Arc::new(InnerState {
-            key: Key::generate(),
-        }),
-    );
-
+    println!("starting");
+    let _ = KEY.set(Key::generate());
     DB.connect::<Ws>("localhost:8080").await?;
 
     DB.signin(Root {
@@ -165,14 +153,13 @@ async fn main() -> Result<(), error::error::Error> {
     }
 
     let app: Router = Router::new()
-        // public routes
-        .route("/", get(routes::index))
         .route("/login/hackclub", get(routes::login))
         .route("/hackclub/callback", get(routes::callback))
+        .route("/", get(routes::index))
         .route("/app", get(routes::main_app))
-        .layer(axum::middleware::from_fn(auth_middleware))
         .layer(axum::middleware::from_fn(connection_info_middleware))
-        .with_state(state)
+        .layer(axum::middleware::from_fn(auth_middleware))
+        .layer(CookieManagerLayer::new())
         .nest("/static", axum_static::static_router("./static"));
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();

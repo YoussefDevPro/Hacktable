@@ -6,25 +6,19 @@ use crate::models::SessionInsert;
 use crate::models::User;
 use crate::ConnectionInfo;
 use crate::DB;
+use crate::KEY;
 use axum::extract::Query;
 use axum::Extension;
 use axum::{http::StatusCode, response::Redirect};
-use axum_extra::extract::{
-    cookie::{Cookie, SameSite},
-    PrivateCookieJar,
-};
 use hackclub_auth_api::{HCAuth, VerificationStatus};
-use serde::Deserialize;
 use sha2::Digest;
 use sha2::Sha256;
+use std::collections::HashMap;
 use surrealdb::sql::Thing;
 use time::Duration;
-use tracing::{debug, error, info, warn};
-
-#[derive(Deserialize, Debug)]
-pub struct Params {
-    code: String,
-}
+use tower_cookies::cookie::SameSite;
+use tower_cookies::Cookie;
+use tower_cookies::Cookies;
 
 pub async fn login() -> Redirect {
     Redirect::to(&HCAuth::new().get_oauth_uri(&[
@@ -39,90 +33,128 @@ pub async fn login() -> Redirect {
 
 #[axum_macros::debug_handler]
 pub async fn callback(
-    Extension(jar): Extension<PrivateCookieJar>,
     connection_info: Extension<ConnectionInfo>,
-    Query(params): Query<Params>,
-) -> axum::response::Result<(PrivateCookieJar, Redirect), Error> {
-    info!("OAuth callback triggered");
+    cookies: Cookies,
+    Query(params): Query<HashMap<String, String>>,
+) -> axum::response::Result<Redirect, Error> {
+    println!("➡️ OAuth callback triggered");
 
     let auth = HCAuth::new();
 
-    let token = auth.exchange_code(params.code).await.map_err(|e| {
-        error!("Failed to exchange OAuth code: {:?}", e);
-        StatusCode::UNAUTHORIZED
-    })?;
+    let code = match params.get("code") {
+        Some(code) => code.to_string(),
+        None => {
+            println!("❌ Missing OAuth code parameter");
+            return Err(StatusCode::BAD_REQUEST.into());
+        }
+    };
 
-    debug!("OAuth code exchanged successfully");
+    println!("🔑 OAuth code received");
 
-    let claims = match auth.verify_jwt_token(token.id_token).await {
-        Ok(claims) => {
-            debug!("JWT verified for sub={}", claims.sub);
-            claims
+    let token = match auth.exchange_code(code).await {
+        Ok(token) => {
+            println!("✅ OAuth code exchanged successfully");
+            token
         }
         Err(e) => {
-            error!("JWT verification failed: {:?}", e);
+            println!("❌ Failed to exchange OAuth code: {:?}", e);
             return Err(StatusCode::UNAUTHORIZED.into());
         }
     };
 
-    if claims.email.is_none() || !claims.email_verified.unwrap_or(false) {
-        warn!("Unverified or missing email for sub={}", claims.sub);
+    let _claims = match auth.verify_jwt_token(token.id_token).await {
+        Ok(claims) => {
+            println!("✅ JWT verified for sub={}", claims.sub);
+            claims
+        }
+        Err(e) => {
+            println!("❌ JWT verification failed: {:?}", e);
+            return Err(StatusCode::UNAUTHORIZED.into());
+        }
+    };
+
+    let resp = match auth.get_identity(token.access_token.unwrap()).await {
+        Ok(v) => v,
+        Err(e) => {
+            println!("❗️ : {e:?}");
+            return Ok(Redirect::to("/"));
+        }
+    };
+
+    if resp.identity.primary_email.is_empty() {
+        println!(
+            "❌ Email missing or not verified for sub={}",
+            resp.identity.id
+        );
         return Err(StatusCode::UNAUTHORIZED.into());
     }
 
-    match claims.verification_status {
+    match resp.identity.verification_status {
         Some(VerificationStatus::Rejected) => {
-            warn!("User {} rejected by verification", claims.sub);
+            println!("❌ User {} rejected by verification", resp.identity.id);
             return Err(StatusCode::FORBIDDEN.into());
         }
         Some(VerificationStatus::Pending) => {
-            info!("User {} pending verification", claims.sub);
-            return Ok((jar, Redirect::to("/")));
+            println!("⏳ User {} pending verification", resp.identity.id);
+            return Ok(Redirect::to("/"));
         }
         Some(VerificationStatus::NotFound) => {
-            warn!("User {} not found in verification system", claims.sub);
-            return Ok((jar, Redirect::to("/")));
+            println!(
+                "⚠️ User {} not found in verification system",
+                resp.identity.id
+            );
+            return Ok(Redirect::to("/"));
         }
         Some(VerificationStatus::Ineligible) => {
-            warn!("User {} ineligible", claims.sub);
+            println!("❌ User {} ineligible", resp.identity.id);
             return Err(StatusCode::FORBIDDEN.into());
         }
-        _ => {}
-    };
+        _ => {
+            println!("✅ Verification status OK");
+        }
+    }
 
-    let user_id = Thing::from(("user", claims.sub.as_str()));
-    let email = claims.email.clone().unwrap();
-    let name = claims.name.clone().unwrap();
+    let user_id = Thing::from(("user", resp.identity.id.as_str()));
+    let email = resp.identity.primary_email.clone();
+    let name = resp.identity.first_name.unwrap() + &resp.identity.last_name.unwrap();
 
-    info!("Upserting user {} ({})", user_id, email);
+    println!("📝 Upserting user {} ({})", user_id, email);
 
-    let _user: Option<User> = DB
+    let _user: Option<User> = match DB
         .query(
             "
-            UPSERT user:$sub
+            UPSERT $id
             SET
               email = $email,
               name = $name,
               created_at = time::now();
-            SELECT * FROM user:$sub;
+            SELECT * FROM $id;
             ",
         )
-        .bind(("sub", user_id.clone()))
+        .bind(("id", user_id.clone()))
         .bind(("email", email))
         .bind(("name", name))
         .await
-        .map_err(|e| {
-            error!("Database error while upserting user {}: {:?}", user_id, e);
-            e
-        })?
-        .take(1)?;
+    {
+        Ok(mut res) => res.take(1)?,
+        Err(e) => {
+            println!(
+                "❌ Database error while upserting user {}: {:?}",
+                user_id, e
+            );
+            return Err(e.into());
+        }
+    };
 
-    let refresh = RefreshToken(token.refresh_token.ok_or_else(|| {
-        error!("Missing refresh token for user {}", user_id);
-        StatusCode::UNAUTHORIZED
-    })?);
+    let refresh_token = match token.refresh_token {
+        Some(rt) => rt,
+        None => {
+            println!("❌ Missing refresh token for user {}", user_id);
+            return Err(StatusCode::UNAUTHORIZED.into());
+        }
+    };
 
-    let refresh_hash = hash_refresh(&refresh);
+    let refresh_hash = hash_refresh(&RefreshToken(refresh_token));
 
     let session_insert = SessionInsert::new(
         user_id.clone(),
@@ -132,37 +164,45 @@ pub async fn callback(
         Some(connection_info.ip.to_owned()),
     );
 
-    let session: Session = DB
-        .create("session")
-        .content(session_insert)
-        .await
-        .map_err(|e| {
-            error!("Failed to create session for {}: {:?}", user_id, e);
-            e
-        })?
-        .unwrap();
+    let session: Session = match DB.create("session").content(session_insert).await {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            println!("❌ Session creation returned None");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR.into());
+        }
+        Err(e) => {
+            println!("❌ Failed to create session for {}: {:?}", user_id, e);
+            return Err(e.into());
+        }
+    };
 
-    info!(
-        "Session created for user {} (session_id={})",
-        user_id,
-        session.id.as_ref().unwrap()
-    );
+    let session_id = session.id.as_ref().unwrap().to_string();
+    let session_id_clean = session_id
+        .strip_prefix("session:")
+        .unwrap_or(&session_id)
+        .to_string();
 
-    let mut cookie = Cookie::new("session", session.id.unwrap().to_string());
-    cookie.set_http_only(true);
-    cookie.set_secure(true);
-    cookie.set_same_site(SameSite::Strict);
+    println!("🧾 Session created for user {} ", user_id);
+
+    let key = KEY.get().unwrap();
+    let private_cookies = cookies.private(key);
+
+    let mut cookie = Cookie::new("session", session_id_clean);
+    cookie.set_http_only(false);
+    cookie.set_secure(false);
+    cookie.set_same_site(SameSite::Lax);
     cookie.set_path("/");
     cookie.set_max_age(Duration::days(5));
+    cookie.set_expires(time::OffsetDateTime::now_utc() + Duration::days(5));
 
-    let jar = jar.add(cookie);
+    private_cookies.add(cookie);
 
-    info!(
-        "Login successful for user {} from ip={} ua={:?}",
+    println!(
+        "🎉 Login successful for user {} (ip={}, ua={:?})",
         user_id, connection_info.ip, connection_info.user_agent
     );
 
-    Ok((jar, Redirect::to("/app")))
+    Ok(Redirect::to("/app"))
 }
 
 fn hash_refresh(rt: &RefreshToken) -> RefreshTokenHash {
