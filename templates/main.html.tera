@@ -1,3 +1,26 @@
 <!DOCTYPE html>
 <img src="https://cdn.drawception.com/drawings/524789/U1gl6336.png"></img>
 <p>{{ msg }}</p>
+ <form method="post" action="/app/workspace">
+    <label for="workspace-name">
+      Workspace name
+    </label>
+    <br>
+
+    <input
+      type="text"
+      id="workspace-name"
+      name="name"
+      placeholder="my-awesome-workspace"
+      required
+      minlength="2"
+      maxlength="50"
+      autocomplete="off"
+    >
+
+    <br><br>
+
+    <button type="submit">
+      Create workspace
+    </button>
+  </form>

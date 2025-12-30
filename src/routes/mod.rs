@@ -1,14 +1,17 @@
-use crate::AuthContext;
 use crate::render;
+use crate::AuthContext;
 pub use auth::callback;
 pub use auth::login;
-use axum::Extension;
 use axum::response::Html;
+use axum::Extension;
 pub use main::main_app;
 use tera::Context;
+pub use workspace::new_workspace;
+pub use workspace::workspace;
 
 mod auth;
 mod main;
+mod workspace;
 
 pub async fn index(auth: Extension<Option<AuthContext>>) -> Html<String> {
     let mut ctx = Context::new();

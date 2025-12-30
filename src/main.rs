@@ -7,7 +7,8 @@ use axum::middleware::Next;
 use axum::response::Html;
 use axum::response::IntoResponse;
 use axum::response::Response;
-use axum::{Router, routing::get};
+use axum::routing::post;
+use axum::{routing::get, Router};
 use axum_extra::TypedHeader;
 use chrono::Utc;
 use headers::UserAgent;
@@ -15,11 +16,11 @@ use lazy_static::lazy_static;
 use std::net::SocketAddr;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
-use surrealdb::Surreal;
 use surrealdb::engine::remote::ws::Client;
 use surrealdb::engine::remote::ws::Ws;
 use surrealdb::opt::auth::Root;
 use surrealdb::sql::Thing;
+use surrealdb::Surreal;
 use tera::Tera;
 use tower_cookies::CookieManagerLayer;
 use tower_cookies::Cookies;
@@ -157,6 +158,8 @@ async fn main() -> Result<(), error::error::Error> {
         .route("/hackclub/callback", get(routes::callback))
         .route("/", get(routes::index))
         .route("/app", get(routes::main_app))
+        .route("/app/workspace", post(routes::new_workspace))
+        .route("/app/workspace/{id}", get(routes::workspace))
         .layer(axum::middleware::from_fn(connection_info_middleware))
         .layer(axum::middleware::from_fn(auth_middleware))
         .layer(CookieManagerLayer::new())

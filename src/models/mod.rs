@@ -20,6 +20,13 @@ pub struct User {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct WorkspaceInsert {
+    pub name: String,
+    pub owner: Thing,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: Option<Thing>,

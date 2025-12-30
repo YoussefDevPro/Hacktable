@@ -4,6 +4,7 @@ use crate::models::RefreshTokenHash;
 use crate::models::Session;
 use crate::models::SessionInsert;
 use crate::models::User;
+use crate::AuthContext;
 use crate::ConnectionInfo;
 use crate::DB;
 use crate::KEY;
@@ -36,8 +37,13 @@ pub async fn callback(
     connection_info: Extension<ConnectionInfo>,
     cookies: Cookies,
     Query(params): Query<HashMap<String, String>>,
+    auth: Extension<Option<AuthContext>>,
 ) -> axum::response::Result<Redirect, Error> {
     println!("➡️ OAuth callback triggered");
+
+    if let Some(_v) = auth.0 {
+        return Ok(Redirect::to("/app"));
+    };
 
     let auth = HCAuth::new();
 
